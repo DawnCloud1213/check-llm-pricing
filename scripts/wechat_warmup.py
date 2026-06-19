@@ -1,10 +1,10 @@
 """WeChat iLink Bot 会话预热脚本
 在 MCP 微信发送前调用，防止 context_token 失效导致消息静默丢弃。
 """
-import json, urllib.request, ssl, time, sys
+import json, urllib.request, ssl, time, sys, os
 
-ACC = 'C:/Users/DawnCloud/.claude/channels/wechat/account.json'
-CTX = 'C:/Users/DawnCloud/.claude/channels/wechat/context_tokens.json'
+ACC = os.path.join(os.path.expanduser('~'), '.claude', 'channels', 'wechat', 'account.json')
+CTX = os.path.join(os.path.expanduser('~'), '.claude', 'channels', 'wechat', 'context_tokens.json')
 
 def warmup():
     try:

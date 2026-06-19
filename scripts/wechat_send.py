@@ -4,8 +4,9 @@
 """
 import json, urllib.request, ssl, time, sys, os
 
-ACC = 'C:/Users/DawnCloud/.claude/channels/wechat/account.json'
-CTX = 'C:/Users/DawnCloud/.claude/channels/wechat/context_tokens.json'
+HOME = os.path.expanduser('~')
+ACC = os.path.join(HOME, '.claude', 'channels', 'wechat', 'account.json')
+CTX = os.path.join(HOME, '.claude', 'channels', 'wechat', 'context_tokens.json')
 
 
 def _load_auth():
