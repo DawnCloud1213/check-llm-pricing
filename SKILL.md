@@ -230,7 +230,7 @@ triggers:
 **推送**（主代理）：
 1. 保存 `latest.json` + 追加 `history.jsonl`
 2. **文字摘要**（直连 API，无 token 风险）：
-   `python C:\Users\DawnCloud\.claude\scripts\wechat_send.py text "claude code：\n摘要…"`
+   `python ~/.claude/scripts/wechat_send.py text "claude code：\n摘要…"`
 3. **截图**（MCP）：
    `wechat_send_image report.png`
 

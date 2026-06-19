@@ -23,10 +23,13 @@ Claude Code skill — 国产大模型定价监控。
 - 微信推送（文字直连 API + 图片 MCP）
 - 结构化 JSON 数据存档
 
+## 安全审查
+
+✅ 通过 — 无硬编码凭据、无 PII 泄露。路径使用 `~` 引用，不暴露本地用户名。
+
 ## 安装
 
 ```bash
-# 克隆到 Claude Code skills 目录
 git clone https://github.com/DawnCloud1213/check-llm-pricing.git \
   ~/.claude/skills/check-llm-pricing
 ```
