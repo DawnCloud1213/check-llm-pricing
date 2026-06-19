@@ -15,6 +15,11 @@ triggers:
 
 自动化采集国产大模型厂商的 API 定价、套餐订阅价格、新模型发布信息，生成可视化对比报告。
 
+## 前置条件
+
+- **Playwright**：`@playwright/mcp` 插件（`mcp__plugin_playwright_playwright__*`）
+- **微信推送**（可选）：`@unlinearity/cli-wechat-bridge` MCP + `wechat_send.py` 脚本。未配置时跳过推送，报告文件本地留存。配置教程见 README。
+
 ## 核心规则
 
 ### 模型强制
@@ -229,12 +234,16 @@ triggers:
 
 **推送**（主代理）：
 1. 保存 `latest.json` + 追加 `history.jsonl`
-2. **文字摘要**（直连 API，无 token 风险）：
-   `python ~/.claude/scripts/wechat_send.py text "claude code：\n摘要…"`
-3. **截图**（MCP）：
-   `wechat_send_image report.png`
+2. 检测微信 MCP 是否可用：检查 `wechat_get_status` 返回是否正常
+3. **若可用**：
+   - **文字摘要**（直连 API）：`python ~/.claude/scripts/wechat_send.py text "claude code：\n摘要…"`
+   - **截图**（MCP，文本已唤醒 session）：`wechat_send_image report.png`
+4. **若不可用**：
+   - 告知用户微信 MCP 未配置，报告文件已本地留存
+   - 列出文件路径：`report_YYYY-MM-DD.html`、`report.png`、`latest.json`
+   - 建议用户按 README 教程配置微信推送
 
-> **推送策略**：文本走直连 API（`wechat_send.py text`），此调用的副作用是唤醒服务端 session，后续 MCP 发图无需额外预热。
+> **推送策略**：文本走直连 API（`wechat_send.py text`），同时唤醒 session 供 MCP 发图。未配置微信 MCP 时降级为本地文件输出。
 
 ## 模型使用规则
 
