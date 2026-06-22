@@ -1,6 +1,6 @@
 ---
 name: check-llm-pricing
-description: 抓取国产大模型厂商的新模型信息、API 按量付费价格、套餐订阅价格，生成对比报告并以图片形式推送至微信。
+description: 抓取国产大模型厂商的新模型信息、API 按量付费价格、套餐订阅价格，生成对比报告并多通道推送。
 triggers:
   - 检查大模型定价
   - 大模型价格对比
@@ -9,6 +9,7 @@ triggers:
   - check LLM pricing
   - 大模型调价
   - AI模型价格
+  - 查询大模型价格
 ---
 
 # 国产大模型定价监控
@@ -17,8 +18,8 @@ triggers:
 
 ## 前置条件
 
-- **Playwright**：`@playwright/mcp` 插件（`mcp__plugin_playwright_playwright__*`）
-- **微信推送**（可选）：`@unlinearity/cli-wechat-bridge` MCP + `wechat_send.py` 脚本。未配置时跳过推送，报告文件本地留存。配置教程见 README。
+- **Playwright**：`@playwright/mcp` 插件（`mcp__playwright__*`），用于采集 llmabacus.com 定价数据。
+- **推送通道**（均为可选）：模块自动检测以下通道并选择可用者推送，无需手动指定。
 
 ## 核心规则
 
@@ -28,7 +29,7 @@ triggers:
 
 ### Playwright 强制
 
-**必须使用官方 Playwright**（`mcp__plugin_playwright_playwright__*`，即 `@playwright/mcp` 插件）。**禁止使用 ECC Playwright**（`mcp__plugin_everything-claude-code_playwright__*`）。
+**必须使用官方 Playwright**（`mcp__playwright__*` 工具集）。**禁止使用 ECC Playwright**（`mcp__plugin_everything-claude-code_playwright__*`）。
 
 > **环境要求**：内置 Playwright MCP 需配置 `--user-data-dir` 指向持久化目录，否则 Chrome 每次弹窗询问自动化权限。详见 Playwright MCP 官方文档 Browser Configuration 章节。
 
@@ -41,10 +42,90 @@ triggers:
 | Phase 1 (Playwright 采集) | haiku 子代理 | 独立的浏览器自动化任务，隔离 Playwright 状态 |
 | Phase 2 (Web 搜索) | haiku 子代理 (并行) | 独立搜索任务，无共享状态，天然可并行 |
 | Phase 3 (整合对比) | 主代理 | 轻量 JSON 比对，无需子代理 |
-| Phase 4 (HTML 生成) | `frontend-design` 技能 | 专业前端设计能力，产出精美报告 |
-| Phase 5 (保存推送) | 主代理 | 纯工具调用，无需 LLM |
+| Phase 4 (HTML 生成 / 摘要) | 主代理（或 `frontend-design` 技能） | 两种输出模式（见下文） |
+| Phase 5 (保存推送) | 主代理 | 纯工具/脚本调用，无需 LLM |
 
 > **原则**：凡涉及外部 I/O（浏览器、网络搜索）的操作均委派给 haiku 子代理，主代理只做纯数据编排。
+
+### 推送通道检测与优先级
+
+本 Skill **自动检测所有可用推送通道**，按以下优先级选择：
+
+```
+优先级 1: 用户记忆偏好（通过 memory 工具查询 "push-preference"）
+优先级 2: 具备 MCP 工具的通道（WeChat MCP / Telegram MCP）
+优先级 3: 具备直连脚本的通道（Telegram / Feishu / WeChat 直连 API）
+优先级 4: 降级为本地文件 + 告知用户路径
+```
+
+**检测方式**（Phase 5 开始时执行）：
+
+1. **读取记忆**：调用 `memory search --query "push preference"` 和 `memory search --query "推送"`，查找用户之前保存的推送偏好。
+2. **检测 MCP 工具**：在当前工具列表中搜索包含键名的工具（如 `wechat_notify`、`wechat_send_image`、`telegram__send_message`）。
+3. **检测通道凭证文件**：检查 `~/.claude/channels/` 下各子目录的存在性（`wechat/`、`telegram/`、`feishu/`）并验证凭证完整性。
+4. **检测推送脚本**：检查 `~/.claude/scripts/` 下是否存在 `wechat_send.py`、`telegram_send.py`、`feishu_send.py`。
+5. **生成通道可用性清单**：综合上述检查，记录每个通道的支持能力（文本/图片/文件）。
+
+**推送执行规则**：
+
+- 按优先级尝试：先试最高优先级通道
+- 每个通道发送**文字摘要**，若通道支持图片则追加发送**报告截图**
+- 当前通道失败（异常/超时/返回错误）则**自动降级到下一通道**
+- 全部通道均不可用时，告知用户文件路径
+- **不重复发送**：一条通道成功发送后，不尝试其余通道（除非 `force_multi_push` 标记）
+
+---
+
+## 推送通道速查
+
+### 1. 微信 WeChat（iLink Bot）
+
+| 能力 | 方式 | 命令 |
+|------|------|------|
+| 文本 | 直连 API 脚本 | `python ~/.claude/scripts/wechat_send.py text "内容"` |
+| 图片 | MCP 工具 | `mcp__wechat__wechat_send_image {path}` |
+| 文件 | MCP 工具 | `mcp__wechat__wechat_send_file {path}` |
+
+**注意事项**：
+- `context_token` 闲置约 1-2 天后失效，发送前需预热
+- 预热脚本：`python ~/.claude/scripts/wechat_warmup.py`
+- 预热成功后再调用 MCP 发送工具
+- 若预热失败，token 已过期，需用户重新扫码
+
+### 2. Telegram Bot
+
+| 能力 | 方式 | 命令 |
+|------|------|------|
+| 文本 | 直连脚本（走代理） | `python telegram_send.py text "内容"` |
+| 图片 | 直连脚本（走代理） | `python telegram_send.py photo <path> [标题]` |
+| 文件 | 直连脚本（走代理） | `python telegram_send.py file <path> [标题]` |
+
+**注意事项**：
+- MCP 的 Telegram 工具因 GFW 直连不可用，必须用直连脚本（内置代理）
+- Token 永不过期，零维护
+- 预设：Bot @Hbc_graduation_project_bot → 用户 @DawnCloud1213 (chat_id=8018758219)
+- 代理：`http://127.0.0.1:7897`
+- 脚本路径：`~/.claude/scripts/telegram_send.py`
+
+### 3. 飞书 Feishu
+
+| 能力 | 方式 | 命令 |
+|------|------|------|
+| 文本 | Webhook 直连 | `python feishu_send.py text "内容"` |
+| 富文本 | Webhook 直连 | `python feishu_send.py post "标题" "[[段落]]"` |
+
+**注意事项**：
+- 群自定义机器人 Webhook，不支持图片/文件
+- 永不过期，国内可直连
+- 脚本路径：`~/.claude/scripts/feishu_send.py`
+
+### 4. 降级：本地文件
+
+当所有推送通道不可用时：
+- 告知用户文件路径：`report_YYYY-MM-DD.html`、`report.png`、`latest.json`
+- 路径：`A:\JUST_DO_IT\llm-pricing-monitor\`
+
+---
 
 ## 数据源策略
 
@@ -65,7 +146,7 @@ triggers:
 **派发一个 haiku 子代理**完成 Playwright 数据采集。子代理 prompt：
 
 ```
-使用 Playwright 完成以下任务（所有操作使用 mcp__plugin_playwright_playwright__* 工具）：
+使用 Playwright 完成以下任务（所有操作使用 mcp__playwright__* 工具）：
 
 1. browser_navigate → https://www.llmabacus.com
 2. 等待 3 秒让 SPA 渲染完成 (browser_wait_for time=3)
@@ -169,126 +250,93 @@ triggers:
    - ⚪ 不变
 4. 统计变更摘要：降价项数、涨价项数、新增模型数
 
-### Phase 4: 生成报告 HTML（frontend-design 技能）
+### Phase 4: 生成输出（两种模式）
 
-**调用 `frontend-design` 技能**生成单个完整报告 HTML 文件 `report_YYYY-MM-DD.html`，保存至 `A:\JUST_DO_IT\llm-pricing-monitor\`。以下为设计模板规范：
+**模式 A — 完整 HTML 报告**（当 Playwright 可用且需要截图时）：
+- 调用 `frontend-design` 技能生成 `report_YYYY-MM-DD.html`
+- 通过 Playwright 截图 → `report_YYYY-MM-DD.png`
+- 设计模板同原规范（白底、max-width:1280px、蓝色渐变色、四宫格摘要等）
 
-**全局：**
-- 背景纯白 `#fff`，字体 `Noto Sans SC`
-- `.container`：`max-width: 1280px; margin: 0 auto`（居中容器，白底无可见留白）
-- `body`：`font-size: 17px; padding: 16px 20px`
+**模式 B — 纯文本摘要**（当仅需推送文字时，性能更优）：
+- 主代理直接编译文本摘要，无需子代理
+- 包含：涨价/降价/新增模型统计、最便宜TOP3、旗舰对比、新模型清单、套餐推荐
 
-**标题区：**
-1. 4px 蓝色渐变条 `linear-gradient(90deg, #1a56db, #3b82f6, #60a5fa, #93c5fd)`
-2. h1：`font-size: 30px; font-weight: 800; color: #0f2b4c`
-3. 副标题：`font-size: 15px; color: #64748b`
+### Phase 5: 保存与多通道推送（主代理）
 
-**摘要区：**
-- 四宫格 `grid-template-columns: repeat(4, 1fr); gap: 10px`
-- 卡片：`padding: 16px 20px; border-radius: 10px; box-shadow: 0 2px 8px rgba(0,0,0,.04); border: 1px solid #e8ecf1`
-- 数值：`font-size: 42px; font-weight: 800; color: #0f2b4c`
-- 标签：`font-size: 14px; color: #94a3b8`
+**第一步：检测可用推送通道**
 
-**表格：**
-- `font-size: 15px`，表头 `font-size: 14px; font-weight: 700; background: #f0f4ff`
-- 斑马纹：`tr:nth-child(even) td { background: #fafbfd }` + `tr:hover td { background: #f0f7ff }`
-- 单元格：`padding: 10px 14px; border-bottom: 1px solid #f1f5f9`
-- 标签：`font-size: 12px; font-weight: 600; padding: 3px 8px; border-radius: 4px`
+按以下顺序检测，生成通道可用性清单：
 
-**卡片（套餐/趋势）：**
-- 阴影 `box-shadow: 0 2px 8px rgba(0,0,0,.04); border-radius: 10px; border: 1px solid #e8ecf1`
-- 趋势卡片左侧 4px 蓝色边框 `border-left: 4px solid #3b82f6`
+```python
+channels = {}
 
-**时序：**
-- 左侧 2px 蓝色竖线 + 圆点标记
-- 条目间距 `margin-bottom: 12px`
+# 1. 检测记忆偏好
+pref = memory_search("push preference")  # 若有，作为第一优先级
 
-**板块结构：**
-1. 标题栏 + 标题 + 副标题
-2. 四宫格摘要卡（厂商数/模型数/价格变动/新模型数）
-3. API 定价表（厂商/模型/输入价/输出价/缓存价/上下文/标签，带价格变动标记）
-4. 套餐订阅卡片 grid
-5. 新模型发布时间线
-6. 行业趋势卡片 grid
+# 2. 检测微信 WeChat
+if os.path.exists("~/.claude/channels/wechat/account.json"):
+    channels["wechat"] = {"text": True, "image": True, "file": True}
 
-### Phase 5: 截图与推送（主代理 + haiku 子代理）
+# 3. 检测 Telegram
+if os.path.exists("~/.claude/channels/telegram/.env"):
+    channels["telegram"] = {"text": True, "image": True, "file": True}
 
-**截图**（haiku 子代理）：
-```
-启动 python -m http.server 8899 --directory "A:\JUST_DO_IT\llm-pricing-monitor"
-
-1. browser_navigate → http://localhost:8899/report_YYYY-MM-DD.html
-2. 等待 2 秒渲染 (browser_wait_for time=2)
-3. browser_evaluate 测量页面：() => ({ w: Math.ceil(document.body.scrollWidth), h: Math.ceil(document.body.scrollHeight) })
-4. browser_resize 到测量值（width=w+10, height=h+20，避免滚动条）
-5. browser_take_screenshot fullPage=true → report.png（保存至桌面，再 cp 到报告目录）
+# 4. 检测飞书 Feishu
+if os.path.exists("~/.claude/channels/feishu/config.json"):
+    channels["feishu"] = {"text": True, "image": False, "file": False}
 ```
 
-> **视口策略**：由于模板使用 `max-width: 1280px` 居中，将视口缩至内容宽度（约 1315px）可消除截图两侧白边，同时使文字占画面比例最大化。
->
-> **文件路径**：Playwright MCP 仅允许写入桌面和 `.playwright-mcp` 目录，截图后需 `cp` 到目标目录。
->
-> **2x 分辨率**：`@playwright/mcp` 截图硬编码 `scale: 'css'`（1x）。如需 retina 截图，需修改 MCP 源码或等待官方支持 `scale: 'device'`。
-
-截完 `taskkill` 服务器。
-
-**推送**（主代理）：
-1. 保存 `latest.json` + 追加 `history.jsonl`
-2. 检测微信 MCP 是否可用：检查 `wechat_get_status` 返回是否正常
-3. **若可用**：
-   - **文字摘要**（直连 API）：`python ~/.claude/scripts/wechat_send.py text "claude code：\n摘要…"`
-   - **截图**（MCP，文本已唤醒 session）：`wechat_send_image report.png`
-4. **若不可用**：
-   - 告知用户微信 MCP 未配置，报告文件已本地留存
-   - 列出文件路径：`report_YYYY-MM-DD.html`、`report.png`、`latest.json`
-   - 建议用户按 README 教程配置微信推送
-
-> **推送策略**：文本走直连 API（`wechat_send.py text`），同时唤醒 session 供 MCP 发图。未配置微信 MCP 时降级为本地文件输出。
-
-## 模型使用规则
-
-| 阶段 | 执行方 | 模型 | 原因 |
-|------|--------|------|------|
-| Phase 1 (API定价采集) | haiku 子代理 | haiku | Playwright 提取 + 数据格式化 |
-| Phase 2 (新闻/套餐搜索) | haiku 子代理 ×2 | haiku | WebSearch + 文本提取，并行 |
-| Phase 3 (整合对比) | 主代理 | haiku | JSON 比对，纯数据处理 |
-| Phase 4 (HTML 生成) | `frontend-design` 技能 | 技能默认 | 专业前端设计 |
-| Phase 5 (截图) | haiku 子代理 | haiku | Playwright 单张全页面截图 |
-| Phase 5 (推送) | 主代理 | 无需 LLM | MCP 推送 |
-
-> 全流程 haiku，零例外。
-
-## 子代理调度速查
+**第二步：按优先级发送**
 
 ```
-Phase 1: Agent(general-purpose, haiku, "采集 llmabacus API 定价", prompt="...")
-
-Phase 2: 同一条消息并行发送：
-  Agent(general-purpose, haiku, "搜索新模型新闻", prompt="...")
-  Agent(general-purpose, haiku, "搜索套餐定价", prompt="...")
-
-Phase 5 截图: Agent(general-purpose, haiku, "截图报告", prompt="测量尺寸并 fullPage 截图...")
+优先级排序（根据记忆偏好 + 可用性 + 能力）：
+1. 用户记忆偏好的通道（如有）
+2. Telegram（Token 永不过期，支持图片/文件）
+3. WeChat MCP（需预热，支持图片/文件）
+4. 飞书（仅文字）
+5. 本地文件（最终降级）
 ```
 
-## 推送速查
+**微信发送流程**（示例）：
+```python
+# 预热
+run("python ~/.claude/scripts/wechat_warmup.py")
 
+# 发送文字
+result = mcp__wechat__wechat_notify(message="claude code：\n📊 摘要...")
+
+# 若通道支持图片且有 report.png，追加发送
+mcp__wechat__wechat_send_image(path="report.png")
 ```
-# 文字 — 直连 API（同时唤醒 session，后续 MCP 无需预热）
-python wechat_send.py text "claude code：
-📊 摘要…"
 
-# 图片 — MCP（文本已唤醒 session，直接发）
-wechat_send_image report.png
+**Telegram 发送流程**（示例）：
+```python
+# 发送文字
+run("python ~/.claude/scripts/telegram_send.py text \"消息内容\"")
+
+# 发送图片（如有）
+run("python ~/.claude/scripts/telegram_send.py photo report.png \"报告标题\"")
 ```
 
-## 报告存档
+**飞书发送流程**（示例）：
+```python
+# 仅文字（不支持图片）
+run("python ~/.claude/scripts/feishu_send.py text \"消息内容\"")
+```
+
+**第三步：保存数据**
+- 保存 `latest.json` 覆盖
+- 追加 `history.jsonl`
+- 若生成了 HTML，保存 `report_YYYY-MM-DD.html`
+
+## 输出存档
 
 ```
 A:\JUST_DO_IT\llm-pricing-monitor\
   ├── latest.json              ← 最新结构化数据
   ├── history.jsonl             ← 追加式历史
-  ├── report_YYYY-MM-DD.html   ← 单页完整报告
-  └── report.png               ← 报告截图
+  ├── report_YYYY-MM-DD.html   ← 单页完整报告（模式 A）
+  └── report_YYYY-MM-DD.png    ← 报告截图（模式 A）
 ```
 
 ## 注意事项
@@ -296,9 +344,9 @@ A:\JUST_DO_IT\llm-pricing-monitor\
 1. **llmabacus.com 是 Next.js SPA**，必须用 Playwright 渲染后提取，不能用 WebFetch
 2. 价格单位为"元/百万 tokens"，核价日期从页面提取
 3. 首次运行无历史数据时跳过 Phase 3 对比步骤
-4. **Playwright**：始终用 `mcp__plugin_playwright_playwright__*`，禁用 ECC 版本
+4. **Playwright**：始终用 `mcp__playwright__*` 工具集
 5. **模型**：全流程 haiku，禁止使用 sonnet/opus
-6. **子代理隔离**：Phase 1-2 和 Phase 5 截图必须通过子代理
+6. **子代理隔离**：Phase 1-2 必须通过子代理
 7. **并行优先**：Phase 2 两个搜索子代理同一消息发出
-8. **HTML 模板**：白底 + `max-width: 1280px` 居中 + 视口缩至内容宽度（~1315px）截图，消除白边
-9. **推送**：文字 `wechat_send.py text`（直连 API，同时唤醒 session），图片 `wechat_send_image`（MCP，利用文本调用已唤醒的 session）
+8. **推送容错**：当前通道失败自动降级下一通道，不重复发送
+9. **记忆偏好**：用户可通过 `remember` 工具保存推送偏好（如 `remember name="push-preference" body="首选推送通道为 Telegram"`），下次运行时自动优先

@@ -2,7 +2,18 @@
 
 Claude Code skill — 国产大模型定价监控。
 
-自动采集国产大模型厂商（DeepSeek、阿里通义、字节豆包、百度文心、腾讯混元、智谱 AI、讯飞星火、百川智能、MiniMax、Kimi、小米等）的 API 定价、套餐订阅价格、新模型发布信息，生成可视化对比报告并推送至微信。
+自动采集国产大模型厂商（DeepSeek、阿里通义、字节豆包、百度文心、腾讯混元、智谱 AI、讯飞星火、百川智能、MiniMax、Kimi、小米等）的 API 定价、套餐订阅价格、新模型发布信息，生成对比报告并**自动选择可用推送通道**送达。
+
+## 推送通道
+
+| 通道 | 文本 | 图片 | 文件 | 方式 |
+|------|:----:|:----:|:----:|------|
+| Telegram | ✅ | ✅ | ✅ | 直连脚本（内置代理） |
+| 微信 (iLink Bot) | ✅ | ✅ | ✅ | MCP + 直连 API 预热 |
+| 飞书 | ✅ | ❌ | ❌ | Webhook 直连 |
+| 本地文件（降级） | — | — | — | 报告留存本地 |
+
+**自动选择**：按用户记忆偏好 → Telegram → 微信 → 飞书 → 本地降级。通道失败自动容错到下一通道。
 
 ## 安装
 
@@ -16,55 +27,24 @@ git clone https://github.com/DawnCloud1213/check-llm-pricing.git \
 | 组件 | 用途 | 必需 |
 |------|------|------|
 | `@playwright/mcp` 插件 | 采集 llmabacus.com 定价数据 | 是 |
-| `@unlinearity/cli-wechat-bridge` MCP | 微信推送图片 | 否（无则本地留存） |
+| 推送通道相关脚本/MCP | 发送报告（见上方表格） | 否（无则本地留存） |
 
-## 配置微信推送（可选）
+## 配置推送通道
 
-无微信 MCP 时，报告文件保留在本地，skill 会告知文件路径。如需推送，按以下步骤配置：
-
-### 1. 安装 wechat-bridge
+### Telegram（推荐）
 
 ```bash
-npm install -g @unlinearity/cli-wechat-bridge
+# 确保 ~/.claude/channels/telegram/.env 存在
+echo "TELEGRAM_BOT_TOKEN=your_token" > ~/.claude/channels/telegram/.env
 ```
 
-### 2. 配置 MCP 服务
+### 微信
 
-在 `.claude.json` 中添加：
+参考 `@unlinearity/cli-wechat-bridge` 文档配置 MCP，扫码登录后自动生成凭证。
 
-```json
-{
-  "mcpServers": {
-    "wechat": {
-      "command": "cmd",
-      "args": ["/c", "node", "%APPDATA%\\npm\\node_modules\\@unlinearity\\cli-wechat-bridge\\dist\\wechat\\wechat-channel.js"],
-      "type": "stdio"
-    }
-  }
-}
-```
+### 飞书
 
-macOS / Linux 用户将 `command` 改为 `"node"`，`args` 中去掉 `"/c"`。
-
-### 3. 认证
-
-重启 Claude Code 后，在对话中执行 `wechat_get_status`。按提示完成扫码登录。成功后 `~/.claude/channels/wechat/` 下会生成 `account.json` 和 `context_tokens.json`。
-
-### 4. 安装发送脚本
-
-```bash
-mkdir -p ~/.claude/scripts
-curl -o ~/.claude/scripts/wechat_send.py \
-  https://raw.githubusercontent.com/DawnCloud1213/check-llm-pricing/master/scripts/wechat_send.py
-```
-
-### 5. 测试
-
-```
-python ~/.claude/scripts/wechat_send.py text "测试消息"
-```
-
-收到消息即配置成功。
+将群机器人 Webhook URL 写入 `~/.claude/channels/feishu/config.json`。
 
 ## 用法
 
@@ -76,9 +56,13 @@ python ~/.claude/scripts/wechat_send.py text "测试消息"
 ## 输出
 
 - 单页 HTML 报告 + 截图 → `report_YYYY-MM-DD.html` / `report.png`
-- 微信推送（文字直连 API + 图片 MCP）
+- 自动推送至可用通道（文字摘要 + 图片）
 - 结构化 JSON → `latest.json` + `history.jsonl`
 
-## 安全审查
+## 记忆偏好
 
-✅ 通过 — 无硬编码凭据、无 PII 泄露。路径使用 `~` 引用。
+用户可保存推送偏好，下次自动优先：
+
+```
+remember name="push-preference" body="首选推送通道为 Telegram"
+```
